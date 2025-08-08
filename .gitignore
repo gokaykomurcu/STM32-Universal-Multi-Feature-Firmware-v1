@@ -1,0 +1,25 @@
+# Ignore build and output files
+/build/
+/Debug/
+/Release/
+/bin/
+/obj/
+*.o
+*.elf
+*.bin
+*.hex
+*.map
+*.d
+*.log
+
+# Ignore IDE-specific files
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Ignore OS files
+Thumbs.db
+.DS_Store
