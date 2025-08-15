@@ -25,6 +25,74 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include "ssd1306.h"
+#include "ssd1306_fonts.h"
+#include <math.h>
+
+static void OLED_DrawLine(int x0, int y0, int x1, int y1, uint8_t color) {
+    int dx = abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+    int dy = -abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+    int err = dx + dy, e2;
+    for (;;) {
+        if (x0 >= 0 && x0 < 128 && y0 >= 0 && y0 < 64) {
+            ssd1306_DrawPixel(x0, y0, color);
+        }
+        if (x0 == x1 && y0 == y1) break;
+        e2 = 2 * err;
+        if (e2 >= dy) { err += dy; x0 += sx; }
+        if (e2 <= dx) { err += dx; y0 += sy; }
+    }
+}
+
+#ifndef ssd1306_DrawLine
+#define ssd1306_DrawLine(x0,y0,x1,y1,c) OLED_DrawLine((x0),(y0),(x1),(y1),(c))
+#endif
+
+
+// radar
+#define RADAR_MAX_RANGE_CM     200
+#define RADAR_R_MAX            50
+#define RADAR_STEP_DEG         2
+#define RADAR_STEP_MS          35
+
+// 64x64
+#define IMAGE_W 64
+#define IMAGE_H 64
+static const uint8_t image_64x64[IMAGE_W * IMAGE_H / 8] = {
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+			0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+			0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+			0xff, 0xbf, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x8f, 0xff, 0xff, 0xff, 0xff, 0xf9, 0xff,
+			0xff, 0x03, 0xff, 0xff, 0xff, 0xff, 0xe0, 0xff, 0xff, 0x01, 0xff, 0xff, 0xff, 0xff, 0x80, 0xff,
+			0xff, 0x00, 0x7f, 0xff, 0xff, 0xfe, 0x00, 0xff, 0xfe, 0x00, 0x3f, 0x00, 0x00, 0xfc, 0x00, 0x7f,
+			0xfe, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7f, 0xfe, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7f,
+			0xfe, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7f, 0xfe, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7f,
+			0xfe, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7f, 0xfe, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7f,
+			0xfe, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7f, 0xfe, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7f,
+			0xfe, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7f, 0xfe, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7f,
+			0xfe, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7f, 0xfc, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f,
+			0xfc, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f, 0xf8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1f,
+			0xf8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1f, 0xf8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1f,
+			0xf0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0f, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0f,
+			0xf0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0f, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0f,
+			0xf0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0f, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0f,
+			0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0f,
+			0xf0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0f, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0f,
+			0xf0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1f, 0xf8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1f,
+			0xf8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1f, 0xfc, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f,
+			0xfc, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f, 0xfc, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f,
+			0xe0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07, 0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
+			0xc7, 0x80, 0x00, 0x00, 0x00, 0x00, 0x01, 0xe3, 0xdf, 0xc0, 0x00, 0x00, 0x00, 0x00, 0x03, 0xfb,
+			0xff, 0xe0, 0x00, 0x00, 0x00, 0x00, 0x07, 0xff, 0xff, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x0f, 0xff,
+			0xff, 0xf8, 0x00, 0x00, 0x00, 0x00, 0x1f, 0xff, 0xff, 0xfe, 0x00, 0x00, 0x00, 0x00, 0x7f, 0xff,
+			0xff, 0xff, 0x80, 0x00, 0x00, 0x01, 0xff, 0xff, 0xff, 0xff, 0xe0, 0x00, 0x00, 0x07, 0xff, 0xff,
+			0xff, 0xff, 0xfe, 0x00, 0x00, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xf8, 0x1f, 0xff, 0xff, 0xff,
+			0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+			0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+			0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff
+};
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -34,6 +102,8 @@ void servoSetAngle(TIM_HandleTypeDef *htim, uint32_t channel, int angle);
 void adxl345_init(I2C_HandleTypeDef *hi2c);
 void adxl345_read_xyz(I2C_HandleTypeDef *hi2c, int16_t *x, int16_t *y, int16_t *z);
 void calc_acceleration_ms2(int16_t xraw, int16_t yraw, int16_t zraw, float* ax, float* ay, float* az);
+static void Radar_DrawSweep(int16_t angle, uint16_t dist_cm, uint8_t dist_ok);
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -48,6 +118,17 @@ void calc_acceleration_ms2(int16_t xraw, int16_t yraw, int16_t zraw, float* ax, 
 #define ADXL345_REG_POWER_CTL 0x2D
 #define ADXL345_REG_DATA_FORMAT 0x31
 #define ADXL345_REG_DATAX0 0x32
+
+//HC-SR04
+#define TRIG_PIN GPIO_PIN_8
+#define TRIG_PORT GPIOA
+#define ECHO_PIN GPIO_PIN_15
+#define ECHO_PORT GPIOB
+
+#define HCSR_MEASURE_PERIOD_MS 100
+#define OLED_REFRESH_PERIOD_MS 200
+
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -63,12 +144,20 @@ I2C_HandleTypeDef hi2c1;
 
 IWDG_HandleTypeDef hiwdg;
 
+TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
+
+// radar
+volatile uint8_t  radarEnabled = 0;
+int16_t           radarAngle   = -90;     // başlangıç açısı
+int8_t            radarDir     = +1;      // +1: sağ -1: sol
+uint32_t          nextRadarStepMs = 0;
+
 volatile uint8_t adcDataReady = 0;
 uint16_t adcValues[ADC_CHANNEL_COUNT]; // PA2, PA3, PA4 sırasıyla
 char rxBuffer[RX_BUFFER_SIZE];
@@ -77,7 +166,6 @@ char exampleCommands[] =
     "LED;ON          \r\n"
     "LED;OFF         \r\n"
     "LED;STATUS;     \r\n"
-    "PWM;SET;50      \r\n"
     "SERVO;SET;30    \r\n"
 	"MCU;RESTART;    \r\n"
 	"I2C;SCAN;		 \r\n"
@@ -93,6 +181,10 @@ char exampleCommands[] =
 	"FLASH;READ;<address>   \r\n"
 	"PWM;SET;FREQ;<frekans>;DUTY;<%duty>; \r\n"
 	"WAIT;<timeout ms>   \r\n"
+	"OLED;WRITE;<text>   \r\n"
+	"MEASURE;DISTANCE;<ON-OFF>  \r\n "
+	"SHOW;IMAGE; \r\n"
+	"RADAR;<ON-OFF>        \r\n"
 	"HELP;           \r\n"
     "------------------------------------------\r\n";
 uint8_t rxData;
@@ -103,11 +195,23 @@ float ax= 0, ay= 0, az= 0;
 volatile bool servoFollowY = false;
 bool ledFollowAccX = false;
 
-//PWM SET FREQ DEGISKENLERI
+//pwm set freq vars
 volatile uint32_t ic_rising1 = 0, ic_rising2 = 0, ic_falling = 0;
 volatile uint32_t period = 0, high_time = 0;
 volatile float measured_freq = 0, measured_duty = 0;
 volatile uint8_t first_rising = 1;
+
+//HC-SR04
+bool hcsr04_measure_cm(uint16_t *out_cm);
+
+volatile uint16_t Distance_cm = 0;
+volatile uint8_t  Distance_ok = 0;
+
+volatile uint8_t oledDistanceOn = 0;
+uint32_t nextHcsrMeasureMs = 0;
+uint32_t nextOledRefreshMs = 0;
+
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -120,6 +224,7 @@ static void MX_I2C1_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_IWDG_Init(void);
 static void MX_TIM3_Init(void);
+static void MX_TIM1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -165,7 +270,21 @@ int main(void)
   MX_ADC1_Init();
   MX_IWDG_Init();
   MX_TIM3_Init();
+  MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
+
+  ssd1306_Init();
+ // ssd1306_Fill(White);
+  // ssd1306_UpdateScreen();
+/*
+  ssd1306_SetCursor(0, 0);
+  ssd1306_WriteString("Gokay <3 Derin", Font_7x10, 1);
+  ssd1306_UpdateScreen(); */
+  HAL_TIM_Base_Start(&htim1);
+
+  //HC-SR04
+  HAL_GPIO_WritePin(TRIG_PORT, TRIG_PIN, GPIO_PIN_RESET); //TRIG Pini haberleşme başlaması için lowa çekildi.
+
   HAL_UART_Receive_IT(&huart1, &rxData, 1);
  // HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
@@ -190,6 +309,7 @@ int main(void)
 //	      HAL_UART_Transmit(&huart1, (uint8_t*)msg, sizeof(msg)-1, HAL_MAX_DELAY);
 //	      HAL_Delay(1000);
 
+
 	 HAL_IWDG_Refresh(&hiwdg); // Burada sürekli besle
 	          // WAIT komutu dışında
 
@@ -199,10 +319,53 @@ int main(void)
 		  command(rxBuffer);								// komutu işle
 
 	  }
+
+	  if (oledDistanceOn) {
+	         uint32_t now = HAL_GetTick();
+
+	         // PERİYODİK ÖLÇME
+	         if (now >= nextHcsrMeasureMs) {
+	             uint16_t cm_tmp;
+	             if (hcsr04_measure_cm(&cm_tmp)) {
+	                 Distance_cm = cm_tmp;
+	                 Distance_ok = 1;
+	             } else {
+	                 Distance_ok = 0;
+	             }
+	             nextHcsrMeasureMs = now + HCSR_MEASURE_PERIOD_MS;
+	         }
+
+	         // OLED periyodik güncelle
+	         if (now >= nextOledRefreshMs) {
+	             ssd1306_Fill(Black);
+	             ssd1306_SetCursor(0, 0);
+	             if (Distance_ok) {
+	                 char line[32];
+	                 snprintf(line, sizeof(line), "Mesafe: %u cm", Distance_cm);
+	                 ssd1306_WriteString(line, Font_7x10, White);
+	             } else {
+	                 ssd1306_WriteString("Mesafe", Font_7x10, White);
+	                 ssd1306_SetCursor(5, 10);
+	                 	            ssd1306_WriteString("Algilanamiyor", Font_7x10, White);
+	             }
+	             ssd1306_UpdateScreen();
+	             nextOledRefreshMs = now + OLED_REFRESH_PERIOD_MS;
+	         }
+	     }
+
 	#ifdef LIVE_EXPRESSION
     // DEBUG MODU DEĞERLER SÜREKLİ GÜNCELLENİYOR
     adxl345_read_xyz(&hi2c1, &gx, &gy, &gz);
     calc_acceleration_ms2(gx, gy, gz, &ax, &ay, &az);
+
+  /* uint16_t cm;
+        if (hcsr04_measure_cm(&cm)) {
+            Distance_cm = cm;
+            Distance_ok = 1;
+        } else {
+            Distance_ok = 0;
+        }
+*/
     #endif
 
     	if (servoFollowY)
@@ -227,6 +390,25 @@ int main(void)
     		else{
     			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_RESET);
     		}
+    	}
+
+    	if (radarEnabled) {
+    	    uint32_t now = HAL_GetTick();
+    	    if (now >= nextRadarStepMs) {
+
+    	        servoSetAngle(&htim2, TIM_CHANNEL_2, radarAngle);
+
+    	        uint16_t cm = 0;
+    	        uint8_t ok = hcsr04_measure_cm(&cm) ? 1 : 0;
+
+    	        Radar_DrawSweep(radarAngle, cm, ok);
+
+    	        radarAngle += radarDir * RADAR_STEP_DEG;
+    	        if (radarAngle >= 90)  { radarAngle = 90;  radarDir = -1; }
+    	        if (radarAngle <= -90) { radarAngle = -90; radarDir = +1; }
+
+    	        nextRadarStepMs = now + RADAR_STEP_MS;
+    	    }
     	}
 
   }
@@ -408,6 +590,52 @@ static void MX_IWDG_Init(void)
 }
 
 /**
+  * @brief TIM1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM1_Init(void)
+{
+
+  /* USER CODE BEGIN TIM1_Init 0 */
+
+  /* USER CODE END TIM1_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM1_Init 1 */
+
+  /* USER CODE END TIM1_Init 1 */
+  htim1.Instance = TIM1;
+  htim1.Init.Prescaler = 71;
+  htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim1.Init.Period = 65535;
+  htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim1.Init.RepetitionCounter = 0;
+  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim1, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM1_Init 2 */
+
+  /* USER CODE END TIM1_Init 2 */
+
+}
+
+/**
   * @brief TIM2 Initialization Function
   * @param None
   * @retval None
@@ -581,7 +809,11 @@ static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
   /* USER CODE BEGIN MX_GPIO_Init_1 */
-
+  GPIO_InitStruct.Pin   = GPIO_PIN_0;
+  GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull  = GPIO_PULLUP;          // harici pull-up yoksa işe yarar
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
@@ -596,6 +828,9 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_RESET);
 
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_RESET);
+
   /*Configure GPIO pin : RED_LED_Pin */
   GPIO_InitStruct.Pin = RED_LED_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -609,6 +844,19 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PB15 */
+  GPIO_InitStruct.Pin = GPIO_PIN_15;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PA8 */
+  GPIO_InitStruct.Pin = GPIO_PIN_8;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pin : PB8 */
   GPIO_InitStruct.Pin = GPIO_PIN_8;
@@ -626,18 +874,130 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-void set_pwm_freq_duty(uint32_t freq, uint8_t duty) {
+
+
+static void Radar_DrawGrid(int cx, int cy) {
+
+    ssd1306_DrawCircle(cx, cy, RADAR_R_MAX, White);
+
+    // açı çizgileri: -90,-60,-30,0,30,60,90
+  /*  for (int a=-90; a<=90; a+=30) {
+        float theta_deg = 90.0f - (float)a;                // -90->180 (sol), 0->90 (yukarı), 90->0 (sağ)
+        float th = theta_deg * 3.1415926f / 180.0f;
+        int x = cx + (int)(RADAR_R_MAX * cosf(th));
+        int y = cy - (int)(RADAR_R_MAX * sinf(th));
+        ssd1306_DrawLine(cx, cy, x, y, White);
+    } */
+}
+
+// kısalan tarama çizgisi
+static void Radar_DrawSweep(int16_t angle, uint16_t dist_cm, uint8_t dist_ok) {
+    const int cx = 64, cy = 63;
+
+    // Mesafeyi piksele ölçekle
+    uint16_t rpx = RADAR_R_MAX;
+    if (dist_ok) {
+        if (dist_cm > RADAR_MAX_RANGE_CM) dist_cm = RADAR_MAX_RANGE_CM;
+        rpx = (uint16_t)((dist_cm * RADAR_R_MAX) / RADAR_MAX_RANGE_CM);
+        if (rpx == 0) rpx = 1;
+    }
+
+    //aciyi ekrana uyarla
+    float theta_deg = 90.0f - (float)angle;
+    float th = theta_deg * 3.14f / 180.0f;
+
+    int x_end = cx + (int)(rpx * cosf(th));
+    int y_end = cy - (int)(rpx * sinf(th));
+
+    // Ekranı çiz
+    ssd1306_Fill(Black);
+    Radar_DrawGrid(cx, cy);
+    ssd1306_DrawLine(cx, cy, x_end, y_end, White);
+
+    char line[24];
+    if (dist_ok) snprintf(line, sizeof(line), "%3dcm  %3d derece", dist_cm, angle);
+    else         snprintf(line, sizeof(line), "---cm  %3d derece", angle);
+    ssd1306_SetCursor(2, 0);
+    ssd1306_WriteString(line, Font_7x10, White);
+
+    ssd1306_UpdateScreen();
+}
+
+
+
+static void OLED_ShowImageCentered(void) {
+    // 128x64 SSD1306’da ortala
+    int x = (128 - IMAGE_W) / 2;  // 32
+    int y = (64  - IMAGE_H) / 2;  // 0
+    ssd1306_Fill(Black);
+    ssd1306_DrawBitmap(x, y, (uint8_t*)image_64x64, IMAGE_W, IMAGE_H, White);
+    ssd1306_UpdateScreen();
+}
+
+
+bool hcsr04_measure_cm(uint16_t *out_cm){
+    if (!out_cm) return false;
+
+    // 3 us TRIG LOW
+    HAL_GPIO_WritePin(TRIG_PORT, TRIG_PIN, GPIO_PIN_RESET);
+    __HAL_TIM_SET_COUNTER(&htim1, 0);
+    while (__HAL_TIM_GET_COUNTER(&htim1) < 3) {}
+
+    // 10 us TRIG HIGH
+    HAL_GPIO_WritePin(TRIG_PORT, TRIG_PIN, GPIO_PIN_SET);
+    __HAL_TIM_SET_COUNTER(&htim1, 0);
+    while (__HAL_TIM_GET_COUNTER(&htim1) < 10) {}
+    HAL_GPIO_WritePin(TRIG_PORT, TRIG_PIN, GPIO_PIN_RESET);
+
+    // echo rising bekle (10 ms timeout)
+    uint32_t t0 = HAL_GetTick();
+    while(!HAL_GPIO_ReadPin(ECHO_PORT, ECHO_PIN)){
+        if((HAL_GetTick() - t0) > 10){
+            Distance_ok = 0;
+            return false;
+        }
+    }
+
+    // pulse ölç
+    __HAL_TIM_SET_COUNTER(&htim1, 0);
+    t0 = HAL_GetTick();
+    while (HAL_GPIO_ReadPin(ECHO_PORT, ECHO_PIN)) {
+        if (HAL_GetTick() - t0 > 30) {
+            Distance_ok = 0;
+            return false;
+        }
+    }
+    uint32_t pulse_us = __HAL_TIM_GET_COUNTER(&htim1); // 1 tick = 1 us (PSC=71)
+
+    float cm = (pulse_us * 0.0343f) / 2.0f;
+
+    // 400 cm üzeri → algılanamıyor kabul et
+    if (cm > 400.0f) {
+        Distance_ok = 0;
+        return false;
+    }
+
+    *out_cm = (uint16_t)(cm + 0.5f);
+    Distance_cm = *out_cm;
+    Distance_ok = 1;
+    return true;
+}
+
+
+ void set_pwm_freq_duty(uint32_t freq, uint8_t duty) {
     uint32_t timer_clk = 72000000;  // 72 MHz
     uint32_t prescaler = 0; // PSC=0 --> 1
     uint32_t period = (timer_clk / (prescaler + 1)) / freq - 1;
     uint32_t pulse = ((period + 1) * duty) / 100;
 
-    __HAL_TIM_SET_PRESCALER(&htim3, prescaler); // Gerekirse ekle!
+    __HAL_TIM_SET_PRESCALER(&htim3, prescaler); //
     __HAL_TIM_SET_AUTORELOAD(&htim3, period);
     __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, pulse);
 
     HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1); // PA6
 }
+
+
 
 void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim) {
     static uint32_t last_rising = 0;
@@ -907,6 +1267,166 @@ void command(char *cmd){
 		}
 	}
 
+	else if (strcmp(token1, "OLED") == 0 && strcmp(token2, "WRITE") == 0){
+		char *start = strchr(cmd, '"');
+		char *end = strchr(cmd, '"');
+
+		if(start && end && end > start + 1){
+			//tırnak arasını kopyala
+			char text[64];
+			size_t len = (size_t)(end-start-1);
+			if (len >= sizeof(text)) len = sizeof(text) - 1;
+			memcpy(text, start+1, len);
+			text[len] = '\0';
+
+			  ssd1306_Fill(Black);                 // ekranı temizle
+			            ssd1306_SetCursor(0, 0);             // sol üst
+			            ssd1306_WriteString(text, Font_7x10, White);
+			            ssd1306_UpdateScreen();
+
+			            char ok[] = "OLED yazi gosterildi.\r\n";
+			            HAL_UART_Transmit(&huart1, (uint8_t*)ok, strlen(ok), HAL_MAX_DELAY);
+		}
+		 else if (token3 && *token3) {
+
+		            ssd1306_Fill(Black);
+		            ssd1306_SetCursor(0, 0);
+		            ssd1306_WriteString(token3, Font_7x10, White);
+		            ssd1306_UpdateScreen();
+
+		            char ok[] = "OLED yazi gosterildi.\r\n";
+		            HAL_UART_Transmit(&huart1, (uint8_t*)ok, strlen(ok), HAL_MAX_DELAY);
+		        }
+		 else {
+		             char err[] = "OLED;WRITE;\"metin\" yaziniz.\r\n";
+		             HAL_UART_Transmit(&huart1, (uint8_t*)err, strlen(err), HAL_MAX_DELAY);
+		         }
+
+		memset(rxBuffer, 0, sizeof(rxBuffer));
+		        process_uart = false;
+		        return;
+	}
+
+	else if (strcmp(token1, "MEASURE") == 0 && strcmp(token2, "DISTANCE") == 0) {
+
+	    if (token3 == NULL) {
+	        // Tek seferlik sadece UART
+	        uint16_t cm = 0;
+	        if (hcsr04_measure_cm(&cm)) {
+	            Distance_cm = cm;
+	            Distance_ok = 1;
+	            char msg[40];
+	            int len = snprintf(msg, sizeof(msg), "Mesafe: %u cm\r\n", cm);
+	            HAL_UART_Transmit(&huart1, (uint8_t*)msg, len, HAL_MAX_DELAY);
+	        } else {
+	            Distance_ok = 0;
+	            char msg[] = "Mesafe algilanamiyor.\r\n";
+	            HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+	        }
+	    }
+	    else if (strcmp(token3, "ON") == 0) {
+	        //
+	        uint16_t cm = 0;
+	        if (hcsr04_measure_cm(&cm)) {
+	            Distance_cm = cm;
+	            Distance_ok = 1;
+	            char msg[40];
+	            int len = snprintf(msg, sizeof(msg), "Mesafe: %u cm\r\n", cm);
+	            HAL_UART_Transmit(&huart1, (uint8_t*)msg, len, HAL_MAX_DELAY);
+	        } else {
+	            Distance_ok = 0;
+	            char msg[] = "Mesafe: algilanamiyor.\r\n";
+	            HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+	        }
+
+	        //  OLED BASLAT
+	        oledDistanceOn    = 1;
+	        nextHcsrMeasureMs = HAL_GetTick();
+	        nextOledRefreshMs = HAL_GetTick();
+
+	        ssd1306_Fill(Black);
+	        ssd1306_SetCursor(0, 0);
+	        if (Distance_ok) {
+	            char line[32];
+	            snprintf(line, sizeof(line), "Mesafe: %u cm", Distance_cm);
+	            ssd1306_WriteString(line, Font_7x10, White);
+	        } else {
+	            ssd1306_WriteString("Mesafe: ", Font_7x10, White);
+	            ssd1306_SetCursor(5, 10);
+	            ssd1306_WriteString("Algilanamiyor", Font_7x10, White);
+	        }
+	        ssd1306_UpdateScreen();
+	    }
+	    else if (strcmp(token3, "OFF") == 0) {
+	        // --- OLED periyodik güncellemeyi kapat ---
+	        oledDistanceOn = 0;
+	        ssd1306_Fill(Black);
+	        ssd1306_UpdateScreen();
+
+	        char msg[] = "Mesafe gosterimi kapatildi.\r\n";
+	        HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+	    }
+	    else {
+	        char msg[] = "Ornek komutlar icin HELP; yaziniz.\r\n";
+	        HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+	    }
+
+	    process_uart = false;
+	    memset(rxBuffer, 0, sizeof(rxBuffer));
+	    return;
+	}
+
+	else if (strcmp(token1, "SHOW") == 0 && strcmp(token2, "IMAGE") == 0) {
+	    OLED_ShowImageCentered();
+	    const char ok[] = "OLED: 64x64 bitmap gosterildi.\r\n";
+	    HAL_UART_Transmit(&huart1, (uint8_t*)ok, strlen(ok), HAL_MAX_DELAY);
+	    memset(rxBuffer, 0, sizeof(rxBuffer));
+	    process_uart = false;
+	    return;
+	}
+
+	else if (strcmp(token1, "RADAR") == 0) {
+	    if (token2 == NULL) {
+	        char m[] = "RADAR;ON veya RADAR;OFF kullanin.\r\n";
+	        HAL_UART_Transmit(&huart1, (uint8_t*)m, strlen(m), HAL_MAX_DELAY);
+	        memset(rxBuffer, 0, sizeof(rxBuffer));
+		    process_uart = false;
+		    return;
+	    }
+
+	    if (strcmp(token2, "ON") == 0) {
+	        radarEnabled = 1;
+	        servoFollowY = false;
+	        oledDistanceOn = 0;
+	        radarAngle = -90;
+	        radarDir   = +1;
+	        nextRadarStepMs = HAL_GetTick();
+	        // blip’leri temizle
+
+	        char m[] = "RADAR baslatildi.\r\n";
+	        HAL_UART_Transmit(&huart1, (uint8_t*)m, strlen(m), HAL_MAX_DELAY);
+	        memset(rxBuffer, 0, sizeof(rxBuffer));
+	        	    process_uart = false;
+	        	    return;	    }
+	    		else if (strcmp(token2, "OFF") == 0) {
+	        radarEnabled = 0;
+	        ssd1306_Fill(Black);
+	        ssd1306_UpdateScreen();
+	        char m[] = "RADAR durduruldu.\r\n";
+	        HAL_UART_Transmit(&huart1, (uint8_t*)m, strlen(m), HAL_MAX_DELAY);
+	        memset(rxBuffer, 0, sizeof(rxBuffer));
+	        	    process_uart = false;
+	        	    return;	    }
+
+	        	else {
+	        char m[] = "Ornek komutlar icin HELP; yaziniz. \r\n";
+	        HAL_UART_Transmit(&huart1, (uint8_t*)m, strlen(m), HAL_MAX_DELAY);
+	        memset(rxBuffer, 0, sizeof(rxBuffer));
+	        	    process_uart = false;
+	        	    return;	    }
+	}
+
+
 	else if(strcmp(token1, "WAIT") == 0 && token2 != NULL)
 	{
 	    uint32_t delayMs = atoi(token2);
@@ -921,6 +1441,19 @@ void command(char *cmd){
 	    process_uart = false;
 	    return;
 	}
+
+
+/*	else if (strcmp(token1, "TIME") == 0 && strcmp(token2, "US") == 0 && token3) {
+	    uint16_t t = (uint16_t)atoi(token3);
+	    uint16_t a = us_now();
+	    delay_us(t);
+	    uint16_t b = us_now();
+	    char msg[64];
+	    sprintf(msg, "delay_us(%u) OK, elapsed ~%u us\r\n", t, (uint16_t)(b - a));
+	    HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+	    process_uart = false; return;
+	}
+// delay_us test kodu     */
 	else if (strcmp(token1, "PWM") == 0 && strcmp(token2, "SET") == 0)
 	{
 	    if(token3 && strcmp(token3, "FREQ") == 0 && token4) {
